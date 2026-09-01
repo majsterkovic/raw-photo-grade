@@ -45,7 +45,7 @@ def main() -> int:
     b = Path(args.after).expanduser()
     dest = Path(args.output).expanduser()
     if not a.exists() or not b.exists():
-        sys.stderr.write("Brak pliku before lub after.\n")
+        sys.stderr.write("Missing before or after file.\n")
         return 1
 
     left = label(load_rgb(a, args.long_edge), args.labels[0])

@@ -1,68 +1,56 @@
-# phone-dng-grade
+# raw-photo-grade
 
-A [Claude Code](https://code.claude.com) skill that develops phone RAW files (DNG / iPhone ProRAW / Pixel / Samsung) the way a working photographer would: inspect, preview, color grade, crop, export.
+Two Claude Code skills that develop RAW photos like a photographer would: inspect the file, make a preview, actually look at it, then grade, crop, and export. Not a one-shot filter.
+
+- **[phone-dng-grade](phone-dng-grade/)** — iPhone ProRAW, Google Pixel RAW+, Samsung Expert RAW DNG. Tuned for computational/linear DNG: baked-in tone-mapping, small-sensor noise, gain maps.
+- **[camera-raw-grade](camera-raw-grade/)** — DSLR/mirrorless RAW: Nikon NEF, Canon CR2/CR3, Sony ARW, Fujifilm RAF, Olympus/OM ORF, Panasonic RW2, Pentax PEF, Leica/generic DNG. Tuned for real sensor headroom and brand color science.
+
+Both skills share one RAW-processing engine (`shared/`) so the develop/crop/preview math is written and tested once. Each skill's own `SKILL.md` and `references/` stay focused on what's actually different for that camera type — see [writing-skills SDO guidance](https://github.com/obra/superpowers) on why the docs don't repeat themselves.
 
 ## Install
 
-```bash
-# Personal skill (all projects)
-mkdir -p ~/.claude/skills
-cp -R phone-dng-grade ~/.claude/skills/phone-dng-grade
-
-# Or project-local
-mkdir -p .claude/skills
-cp -R phone-dng-grade .claude/skills/phone-dng-grade
-```
-
-### System dependencies
-
-**macOS**
+Copy all three folders — the skill(s) you want **and** `shared/` — as siblings into your skills directory. `shared/` is not a skill itself; it's imported by the skill scripts via a relative path, so it must sit next to them.
 
 ```bash
-brew install libraw
-pip3 install -r ~/.claude/skills/phone-dng-grade/requirements.txt
+# personal skills (Claude Code)
+cp -r phone-dng-grade camera-raw-grade shared ~/.claude/skills/
+
+# or project-local
+cp -r phone-dng-grade camera-raw-grade shared /path/to/project/.claude/skills/
 ```
 
-**Debian / Ubuntu**
+Only need one camera type? Copy just that skill folder plus `shared/`:
 
 ```bash
-sudo apt-get install -y libraw-dev python3-pip
-pip3 install -r ~/.claude/skills/phone-dng-grade/requirements.txt
+cp -r camera-raw-grade shared ~/.claude/skills/
 ```
 
-Optional: `exiftool` (richer metadata) and ImageMagick (`convert`).
-
-## Use in Claude Code
-
-Drop `.dng` files into your project folder and ask, e.g.:
-
-- "develop these DNGs like a photographer, warm tones, 4:5 crop"
-- "make a preview of IMG_1234.DNG and dial in white balance and contrast"
-- `/phone-dng-grade ./DCIM`
-
-Claude should make a small preview first, **look at it**, iterate on the sliders, and only then export at full resolution — see `SKILL.md` for the full workflow and hard rules.
-
-Manual / direct use:
+Then install the Python dependencies (same for both skills):
 
 ```bash
-SKILL=~/.claude/skills/phone-dng-grade
-python3 "$SKILL/scripts/inspect_dng.py" photo.dng
-python3 "$SKILL/scripts/develop.py" photo.dng -o preview.jpg --look warm-golden --preview
-python3 "$SKILL/scripts/crop.py" preview.jpg -o cropped.jpg --aspect 4:5 --anchor subject
-python3 "$SKILL/scripts/develop.py" photo.dng -o final.jpg --look warm-golden --full
+pip3 install -r phone-dng-grade/requirements.txt   # or camera-raw-grade/requirements.txt — identical
 ```
 
-## Looks
+Needs `rawpy` (LibRaw binding), `numpy`, `Pillow`, and libraw itself on the system (`brew install libraw` / `apt install libraw-dev`). Canon CR3 needs a reasonably recent libraw.
 
-`neutral` `natural` `warm-golden` `cool-cinematic` `portrait` `food` `travel` `night` `editorial-flat`
+## Usage
 
-Descriptions and slider ranges: `references/look-recipes.md`.
+Once installed, mention what you're working with and Claude Code should pick up the right skill on its own — "grade this iPhone ProRAW" or "develop these NEF files from my D850 shoot." You can also invoke a skill's scripts directly:
 
-## Important
+```bash
+python3 phone-dng-grade/scripts/inspect_dng.py photo.dng
+python3 camera-raw-grade/scripts/inspect_raw.py photo.nef
+```
 
-- The original DNG is never overwritten.
-- iPhone ProRAW already carries some tone mapping — don't max out shadow lift and clarity.
-- Small sensor = shadow noise. Nail exposure and white balance first; saturation last.
+See each skill's `SKILL.md` for the full workflow.
+
+## Repo layout
+
+```
+phone-dng-grade/    skill: phone/computational DNG
+camera-raw-grade/   skill: DSLR/mirrorless RAW
+shared/              RAW decode + grade engine, imported by both skills' scripts (not a skill itself)
+```
 
 ## License
 

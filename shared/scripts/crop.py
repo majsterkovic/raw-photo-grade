@@ -189,7 +189,7 @@ def main() -> int:
     src = Path(args.input).expanduser()
     dest = Path(args.output).expanduser()
     if not src.exists():
-        sys.stderr.write(f"Nie znaleziono: {src}\n")
+        sys.stderr.write(f"Not found: {src}\n")
         return 1
 
     im = Image.open(src).convert("RGB")

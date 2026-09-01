@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Develop a phone DNG into a graded JPEG/TIFF."""
+"""Shared RAW develop engine — decode, grade, crop-friendly export.
+
+Not a skill by itself. Each skill's own scripts/develop.py imports `run()`
+from here and supplies its own LOOKS presets, default look, and accepted
+file suffixes. The image-processing math (exposure, tone, color, clarity,
+noise reduction, sharpen, vignette) is camera-agnostic; only the LOOKS
+numbers and the RAW decode call should differ per camera family.
+"""
 
 from __future__ import annotations
 
@@ -11,160 +18,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (  # noqa: E402
-    collect_inputs,
-    linear_to_srgb,
-    luma,
-    require_rawpy,
-    srgb_to_linear,
-)
-
-LOOKS = {
-    "neutral": {
-        "exposure": 0.0,
-        "contrast": 0,
-        "highlights": 0,
-        "shadows": 0,
-        "whites": 0,
-        "blacks": 0,
-        "temperature": 0,
-        "tint": 0,
-        "vibrance": 0,
-        "saturation": 0,
-        "clarity": 0,
-        "vignette": 0,
-        "sharpen": 10,
-        "noise_luma": 0,
-    },
-    "natural": {
-        "exposure": 0.1,
-        "contrast": 12,
-        "highlights": -15,
-        "shadows": 12,
-        "whites": 4,
-        "blacks": -6,
-        "temperature": 2,
-        "tint": -1,
-        "vibrance": 10,
-        "saturation": 2,
-        "clarity": 8,
-        "vignette": -4,
-        "sharpen": 18,
-        "noise_luma": 8,
-    },
-    "warm-golden": {
-        "exposure": 0.15,
-        "contrast": 14,
-        "highlights": -22,
-        "shadows": 16,
-        "whites": 2,
-        "blacks": -8,
-        "temperature": 16,
-        "tint": 4,
-        "vibrance": 14,
-        "saturation": 6,
-        "clarity": 6,
-        "vignette": -8,
-        "sharpen": 16,
-        "noise_luma": 8,
-    },
-    "cool-cinematic": {
-        "exposure": -0.05,
-        "contrast": 18,
-        "highlights": -18,
-        "shadows": 8,
-        "whites": -4,
-        "blacks": -14,
-        "temperature": -12,
-        "tint": -2,
-        "vibrance": 6,
-        "saturation": -4,
-        "clarity": 10,
-        "vignette": -12,
-        "sharpen": 14,
-        "noise_luma": 10,
-    },
-    "portrait": {
-        "exposure": 0.2,
-        "contrast": 8,
-        "highlights": -12,
-        "shadows": 20,
-        "whites": 2,
-        "blacks": -4,
-        "temperature": 8,
-        "tint": 3,
-        "vibrance": 8,
-        "saturation": -2,
-        "clarity": 2,
-        "vignette": -6,
-        "sharpen": 10,
-        "noise_luma": 12,
-    },
-    "food": {
-        "exposure": 0.15,
-        "contrast": 16,
-        "highlights": -10,
-        "shadows": 10,
-        "whites": 8,
-        "blacks": -8,
-        "temperature": 10,
-        "tint": 2,
-        "vibrance": 18,
-        "saturation": 8,
-        "clarity": 14,
-        "vignette": -6,
-        "sharpen": 22,
-        "noise_luma": 6,
-    },
-    "travel": {
-        "exposure": 0.12,
-        "contrast": 16,
-        "highlights": -20,
-        "shadows": 14,
-        "whites": 6,
-        "blacks": -10,
-        "temperature": 6,
-        "tint": 0,
-        "vibrance": 16,
-        "saturation": 6,
-        "clarity": 12,
-        "vignette": -6,
-        "sharpen": 20,
-        "noise_luma": 8,
-    },
-    "night": {
-        "exposure": 0.25,
-        "contrast": 10,
-        "highlights": -30,
-        "shadows": 8,
-        "whites": -6,
-        "blacks": -12,
-        "temperature": -4,
-        "tint": -2,
-        "vibrance": 8,
-        "saturation": 2,
-        "clarity": 4,
-        "vignette": -8,
-        "sharpen": 8,
-        "noise_luma": 22,
-    },
-    "editorial-flat": {
-        "exposure": 0.2,
-        "contrast": -8,
-        "highlights": -8,
-        "shadows": 18,
-        "whites": -6,
-        "blacks": 8,
-        "temperature": 0,
-        "tint": 0,
-        "vibrance": 4,
-        "saturation": -6,
-        "clarity": 0,
-        "vignette": 0,
-        "sharpen": 8,
-        "noise_luma": 6,
-    },
-}
+from raw_common import collect_inputs, linear_to_srgb, luma, require_rawpy, srgb_to_linear  # noqa: E402
 
 SLIDER_KEYS = [
     "exposure",
@@ -184,12 +38,12 @@ SLIDER_KEYS = [
 ]
 
 
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Develop phone DNG")
-    p.add_argument("inputs", nargs="+", help="DNG file(s) or folder")
+def parse_args(looks: dict, default_look: str, description: str) -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=description)
+    p.add_argument("inputs", nargs="+", help="RAW file(s) or folder")
     p.add_argument("-o", "--output", help="Output file (single input only)")
     p.add_argument("--out-dir", help="Output directory for batch")
-    p.add_argument("--look", default="natural", choices=sorted(LOOKS))
+    p.add_argument("--look", default=default_look, choices=sorted(looks))
     p.add_argument("--params", help="JSON with slider overrides")
     p.add_argument("--preview", action="store_true", help="Long edge 1600 JPEG")
     p.add_argument("--full", action="store_true", help="Full resolution")
@@ -205,8 +59,8 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def merge_params(args: argparse.Namespace) -> dict:
-    params = dict(LOOKS[args.look])
+def merge_params(args: argparse.Namespace, looks: dict) -> dict:
+    params = dict(looks[args.look])
     params["look"] = args.look
     if args.params:
         with open(args.params, encoding="utf-8") as fh:
@@ -220,7 +74,7 @@ def merge_params(args: argparse.Namespace) -> dict:
     return params
 
 
-def decode_dng(path: Path, bright: float, no_auto_bright: bool) -> np.ndarray:
+def decode_raw(path: Path, bright: float, no_auto_bright: bool) -> np.ndarray:
     require_rawpy()
     import rawpy
 
@@ -253,7 +107,7 @@ def apply_orientation(img: np.ndarray, how: str, path: Path) -> np.ndarray:
 
 def _exif_orientation_degrees(path: Path) -> int:
     try:
-        from PIL import Image, ImageOps
+        from PIL import Image
 
         with Image.open(path) as im:
             exif = im.getexif()
@@ -343,7 +197,7 @@ def apply_grade(rgb: np.ndarray, p: dict) -> np.ndarray:
 def _box_blur(img: np.ndarray, radius: int) -> np.ndarray:
     if radius < 1:
         return img
-    # Separable box via cumulative sum — fast enough for previews and phone res
+    # Separable box via cumulative sum — fast enough for previews and full-res stills
     pad = radius
     x = np.pad(img, ((pad, pad), (pad, pad), (0, 0)), mode="edge")
     c = np.cumsum(x, axis=0)
@@ -425,7 +279,7 @@ def dest_path(src: Path, args: argparse.Namespace) -> Path:
 
 
 def process_one(src: Path, dest: Path, args: argparse.Namespace, params: dict) -> dict:
-    rgb = decode_dng(src, args.bright, args.no_auto_bright)
+    rgb = decode_raw(src, args.bright, args.no_auto_bright)
     rgb = apply_orientation(rgb, args.orient, src)
     long_edge = args.long_edge
     if args.preview and not args.full and not long_edge:
@@ -442,22 +296,19 @@ def process_one(src: Path, dest: Path, args: argparse.Namespace, params: dict) -
     }
 
 
-def main() -> int:
-    args = parse_args()
-    files = collect_inputs(args.inputs)
+def run(looks: dict, default_look: str, suffixes: set[str], description: str) -> int:
+    """Entry point a skill's own develop.py calls with its LOOKS/suffixes."""
+    args = parse_args(looks, default_look, description)
+    files = collect_inputs(args.inputs, suffixes)
     if args.output and len(files) > 1:
-        sys.stderr.write("-o działa tylko dla jednego pliku. Użyj --out-dir.\n")
+        sys.stderr.write("-o only works for a single file. Use --out-dir for batches.\n")
         return 1
-    params = merge_params(args)
+    params = merge_params(args, looks)
     reports = []
     for src in files:
         dest = dest_path(src, args)
-        print(f"develop  {src.name}  →  {dest}", file=sys.stderr)
+        print(f"develop  {src.name}  ->  {dest}", file=sys.stderr)
         reports.append(process_one(src, dest, args, params))
     json.dump(reports if len(reports) > 1 else reports[0], sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

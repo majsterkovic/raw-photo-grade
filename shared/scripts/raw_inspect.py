@@ -1,69 +1,69 @@
 #!/usr/bin/env python3
-"""Inspect phone DNG files — metadata + raw shape, no develop."""
+"""Shared RAW inspection engine — metadata + raw shape, no develop.
+
+Not a skill by itself. Each skill's own scripts/inspect_*.py imports `run()`
+from here and supplies a `classify(exif) -> (family, hint)` function that
+knows about its own camera family (phone brands vs DSLR/mirrorless brands).
+"""
 
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import collect_inputs, dump_json, require_rawpy  # noqa: E402
+from raw_common import collect_inputs, dump_json, require_rawpy  # noqa: E402
+
+EXIFTOOL_KEYS = [
+    "Make",
+    "Model",
+    "Lens",
+    "LensModel",
+    "Software",
+    "DateTimeOriginal",
+    "ISO",
+    "ExposureTime",
+    "FNumber",
+    "FocalLength",
+    "FocalLengthIn35mmFormat",
+    "Orientation",
+    "ColorMatrix1",
+    "ColorMatrix2",
+    "AsShotNeutral",
+    "UniqueCameraModel",
+    "DNGVersion",
+    "ImageWidth",
+    "ImageHeight",
+    "DefaultCropSize",
+    "SemanticName",
+]
 
 
 def exiftool_tags(path: Path) -> dict:
     if not shutil.which("exiftool"):
         return {}
-    keys = [
-        "Make",
-        "Model",
-        "Software",
-        "DateTimeOriginal",
-        "ISO",
-        "ExposureTime",
-        "FNumber",
-        "FocalLength",
-        "FocalLengthIn35mmFormat",
-        "Orientation",
-        "ColorMatrix1",
-        "ColorMatrix2",
-        "AsShotNeutral",
-        "UniqueCameraModel",
-        "DNGVersion",
-        "ImageWidth",
-        "ImageHeight",
-        "DefaultCropSize",
-        "SemanticName",
-    ]
-    cmd = ["exiftool", "-s", "-s", "-s"] + [f"-{k}" for k in keys] + [str(path)]
-    try:
-        out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, text=True)
-    except subprocess.CalledProcessError:
-        return {}
-    tags = {}
-    # exiftool without -json prints one value per requested tag that exists, not labeled.
-    # Use JSON instead when available.
     try:
         raw = subprocess.check_output(
-            ["exiftool", "-json", "-n"] + [f"-{k}" for k in keys] + [str(path)],
+            ["exiftool", "-json", "-n"] + [f"-{k}" for k in EXIFTOOL_KEYS] + [str(path)],
             stderr=subprocess.DEVNULL,
             text=True,
         )
-        import json
-
         arr = json.loads(raw)
         if arr:
             row = arr[0]
             row.pop("SourceFile", None)
             return row
     except Exception:
-        return {"exiftool_raw": out.strip()}
-    return tags
+        pass
+    return {}
 
 
-def inspect_one(path: Path) -> dict:
+def inspect_one(path: Path, classify: Callable[[dict], tuple[str, str]]) -> dict:
     require_rawpy()
     import rawpy
 
@@ -111,49 +111,22 @@ def inspect_one(path: Path) -> dict:
     if extra:
         info["exif"] = extra
 
-    make = str(extra.get("Make", "")).lower()
-    model = str(extra.get("Model", "")).lower()
-    software = str(extra.get("Software", "")).lower()
-    if "apple" in make or "iphone" in model:
-        info["family"] = "iphone-proraw"
-        info["hint"] = (
-            "ProRAW — ostrożnie z cieniami i clarity; lokalny tone-mapping bywa już w pliku."
-        )
-    elif "google" in make or "pixel" in model or "hdr+" in software:
-        info["family"] = "pixel-dng"
-        info["hint"] = (
-            "Pixel DNG — WB tagi bywają mylące; startuj z camera WB i koryguj na podglądzie."
-        )
-    elif "samsung" in make:
-        info["family"] = "samsung-dng"
-        info["hint"] = "Samsung DNG — często ciepły as-shot; sprawdź skórę i neonowe LED."
-    else:
-        info["family"] = "generic-dng"
+    family, hint = classify(extra)
+    info["family"] = family
+    if hint:
+        info["hint"] = hint
 
     return info
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Inspect phone DNG metadata")
-    parser.add_argument("inputs", nargs="+", help="DNG file or folder")
-    parser.add_argument("--json", action="store_true", help="Print JSON")
-    args = parser.parse_args()
-
-    files = collect_inputs(args.inputs)
-    reports = [inspect_one(p) for p in files]
-
-    if args.json or len(reports) > 1:
-        dump_json(reports if len(reports) > 1 else reports[0])
-        return 0
-
-    r = reports[0]
+def print_report(r: dict) -> None:
     print(f"file        {r['path']}")
     print(f"size        {r['size_mb']} MB")
     print(f"family      {r.get('family', '?')}")
     if "raw" in r:
         raw = r["raw"]
-        print(f"raw size    {raw['raw_width']}×{raw['raw_height']}")
-        print(f"active      {raw['width']}×{raw['height']}")
+        print(f"raw size    {raw['raw_width']}x{raw['raw_height']}")
+        print(f"active      {raw['width']}x{raw['height']}")
     if r.get("camera_whitebalance"):
         print(f"camera WB   {r['camera_whitebalance']}")
     if "exif" in r:
@@ -161,12 +134,15 @@ def main() -> int:
         for key in (
             "Make",
             "Model",
+            "Lens",
+            "LensModel",
             "Software",
             "DateTimeOriginal",
             "ISO",
             "ExposureTime",
             "FNumber",
             "FocalLength",
+            "FocalLengthIn35mmFormat",
             "Orientation",
         ):
             if key in ex:
@@ -175,9 +151,21 @@ def main() -> int:
         print(f"hint        {r['hint']}")
     if r.get("error"):
         print(f"error       {r['error']}")
-        return 1
-    return 0
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+def run(suffixes: set[str], description: str, classify: Callable[[dict], tuple[str, str]]) -> int:
+    """Entry point a skill's own inspect_*.py calls with its classify()."""
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument("inputs", nargs="+", help="RAW file or folder")
+    parser.add_argument("--json", action="store_true", help="Print JSON")
+    args = parser.parse_args()
+
+    files = collect_inputs(args.inputs, suffixes)
+    reports = [inspect_one(p, classify) for p in files]
+
+    if args.json or len(reports) > 1:
+        dump_json(reports if len(reports) > 1 else reports[0])
+    else:
+        print_report(reports[0])
+
+    return 1 if any(r.get("error") for r in reports) else 0

@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Shared helpers for phone-dng-grade."""
+"""Shared low-level helpers used by both phone-dng-grade and camera-raw-grade.
+
+Not a skill by itself — install alongside the skill folders that import it
+(see the repo README). Kept small and generic: nothing here should know
+about a specific camera family.
+"""
 
 from __future__ import annotations
 
@@ -7,42 +12,41 @@ import json
 import sys
 from pathlib import Path
 
-
-DNG_SUFFIXES = {".dng", ".DNG"}
-IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp", ".JPG", ".JPEG", ".PNG"}
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}
 
 
-def require_rawpy():
+def require_rawpy() -> None:
     try:
         import rawpy  # noqa: F401
     except ImportError as exc:
         sys.stderr.write(
-            "Brak pakietu rawpy. Zainstaluj libraw, potem:\n"
+            "rawpy is not installed. Install libraw, then:\n"
             "  pip3 install rawpy numpy Pillow\n"
-            f"Szczegóły: {exc}\n"
+            f"Details: {exc}\n"
         )
         sys.exit(2)
 
 
-def collect_inputs(paths: list[str]) -> list[Path]:
+def collect_inputs(paths: list[str], suffixes: set[str]) -> list[Path]:
+    """Resolve a mix of files and folders into a sorted list of RAW files.
+
+    `suffixes` should include both-case variants if the filesystem is
+    case-sensitive (e.g. {".dng", ".DNG"}).
+    """
     files: list[Path] = []
     for raw in paths:
         p = Path(raw).expanduser()
         if not p.exists():
-            sys.stderr.write(f"Nie znaleziono: {p}\n")
+            sys.stderr.write(f"Not found: {p}\n")
             sys.exit(1)
         if p.is_dir():
-            found = sorted(
-                q
-                for q in p.rglob("*")
-                if q.is_file() and q.suffix in DNG_SUFFIXES
-            )
+            found = sorted(q for q in p.rglob("*") if q.is_file() and q.suffix in suffixes)
             files.extend(found)
         else:
             files.append(p)
     if not files:
-        sys.stderr.write("Brak plików DNG do przetworzenia.\n")
-        exit(1)
+        sys.stderr.write("No matching RAW files to process.\n")
+        sys.exit(1)
     return files
 
 
@@ -67,6 +71,4 @@ def linear_to_srgb(x):
 
 
 def luma(rgb):
-    import numpy as np
-
     return rgb[..., 0] * 0.2126 + rgb[..., 1] * 0.7152 + rgb[..., 2] * 0.0722
