@@ -1,0 +1,17 @@
+{
+  "look": "natural",
+  "exposure": 0.15,
+  "contrast": 12,
+  "highlights": -20,
+  "shadows": 14,
+  "whites": 4,
+  "blacks": -6,
+  "temperature": 4,
+  "tint": 0,
+  "vibrance": 12,
+  "saturation": 2,
+  "clarity": 8,
+  "vignette": -4,
+  "sharpen": 16,
+  "noise_luma": 8
+}
